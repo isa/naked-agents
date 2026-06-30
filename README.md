@@ -28,7 +28,15 @@ naked search "tokio runtime"            # full-text search across sessions
 naked tui                               # interactive browser
 ```
 
+All color-generating commands take `--color always|auto|never` (default `auto`):
+use `always` to keep color when piping through `head`/`tail`/`grep`.
 `list`, `show`, and `search` all take `--json` to emit the unified model.
+
+## Screenshots
+
+![naked](docs/screenshots/shot1.png)
+
+![naked](docs/screenshots/shot2.png)
 
 ### TUI keybindings
 
@@ -65,3 +73,7 @@ src/
 One renderer (`format.rs`) feeds both the CLI and the TUI, so a transcript looks
 the same in both. Parsing is deliberately loose — unknown JSONL line/block types
 are skipped, never fatal, so the on-disk format can drift without breaking reads.
+
+## License
+
+Licensed under the [MIT License](LICENSE).
