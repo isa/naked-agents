@@ -19,6 +19,10 @@ use crate::source;
     long_about = None
 )]
 pub struct Cli {
+    /// When to use color. `always` keeps color even when piped (head/tail/grep).
+    #[arg(long, value_enum, global = true, default_value_t = ColorWhen::Auto)]
+    pub color: ColorWhen,
+
     #[command(subcommand)]
     pub command: Cmd,
 }
@@ -130,13 +134,33 @@ impl ProviderFilter {
     }
 }
 
+/// When to emit ANSI color.
+#[derive(Clone, Copy, Debug, ValueEnum, PartialEq, Eq)]
+#[value(rename_all = "lowercase")]
+pub enum ColorWhen {
+    Always,
+    Auto,
+    Never,
+}
+
+impl ColorWhen {
+    fn active(self) -> bool {
+        match self {
+            ColorWhen::Always => true,
+            ColorWhen::Never => false,
+            ColorWhen::Auto => std::io::stdout().is_terminal(),
+        }
+    }
+}
+
 pub fn run() -> Result<()> {
     let cli = Cli::parse();
+    let color = cli.color.active();
     match cli.command {
         Cmd::List(args) => cmd_list(args),
-        Cmd::Show(args) => cmd_show(args),
-        Cmd::Search(args) => cmd_search(args),
-        Cmd::Latest(args) => cmd_latest(args),
+        Cmd::Show(args) => cmd_show(args, color),
+        Cmd::Search(args) => cmd_search(args, color),
+        Cmd::Latest(args) => cmd_latest(args, color),
         Cmd::Tui(args) => cmd_tui(args),
     }
 }
@@ -207,7 +231,7 @@ fn truncate(s: &str, max: usize) -> String {
     out
 }
 
-fn cmd_show(args: ShowArgs) -> Result<()> {
+fn cmd_show(args: ShowArgs, color: bool) -> Result<()> {
     let sessions = source::discover_all()?;
     let summary = resolve_session(&sessions, &args.id)?;
 
@@ -220,7 +244,7 @@ fn cmd_show(args: ShowArgs) -> Result<()> {
     }
 
     let session = source::load_session(&summary)?;
-    print_session(&session, &show_options(&args))?;
+    print_session(&session, &show_options(&args), color)?;
     Ok(())
 }
 
@@ -233,7 +257,7 @@ fn show_options(args: &ShowArgs) -> ShowOptions {
     }
 }
 
-fn cmd_search(args: SearchArgs) -> Result<()> {
+fn cmd_search(args: SearchArgs, color: bool) -> Result<()> {
     let provider = args.provider.map(|p| p.to_provider());
     let sessions = source::filter(
         source::discover_all()?,
@@ -249,7 +273,6 @@ fn cmd_search(args: SearchArgs) -> Result<()> {
         return Ok(());
     }
 
-    let color = std::io::stdout().is_terminal();
     let shown: Vec<search::Hit> = hits.iter().take(args.limit).cloned().collect();
     let out = search::fmt_hits(&shown, color);
     let stdout = std::io::stdout();
@@ -260,7 +283,7 @@ fn cmd_search(args: SearchArgs) -> Result<()> {
     Ok(())
 }
 
-fn cmd_latest(args: LatestArgs) -> Result<()> {
+fn cmd_latest(args: LatestArgs, color: bool) -> Result<()> {
     let sessions = source::discover_all()?;
     let summary = sessions
         .first()
@@ -272,7 +295,7 @@ fn cmd_latest(args: LatestArgs) -> Result<()> {
         max_tool_lines: 12,
         raw: args.raw,
     };
-    print_session(&session, &opts)?;
+    print_session(&session, &opts, color)?;
     Ok(())
 }
 
@@ -281,7 +304,7 @@ fn cmd_tui(args: TuiArgs) -> Result<()> {
     crate::tui::run(provider, args.project.as_deref())
 }
 
-fn print_session(session: &Session, opts: &ShowOptions) -> Result<()> {
+fn print_session(session: &Session, opts: &ShowOptions, color: bool) -> Result<()> {
     if !opts.raw {
         // Title banner.
         let stdout = std::io::stdout();
@@ -304,8 +327,11 @@ fn print_session(session: &Session, opts: &ShowOptions) -> Result<()> {
 
     let lines = format::render_session(session, opts);
     let is_tty = std::io::stdout().is_terminal();
-    let width = if is_tty && !opts.raw { term_width() } else { 0 };
-    let out = format::fmt_ansi(&lines, width, is_tty && !opts.raw);
+    let color = color && !opts.raw;
+    // Wrap to terminal width when going to a tty OR when color is forced
+    // (--color always, e.g. piped to less/head but still pretty).
+    let width = if !opts.raw && (is_tty || color) { term_width() } else { 0 };
+    let out = format::fmt_ansi(&lines, width, color);
     let stdout = std::io::stdout();
     let _ = stdout.lock().write_all(out.as_bytes());
     Ok(())
@@ -359,10 +385,14 @@ pub(crate) fn resolve_session(sessions: &[SessionSummary], token: &str) -> Resul
 }
 
 fn term_width() -> usize {
-    let (cols, _rows) = (|| {
-        let size = crossterm::terminal::size().ok()?;
-        Some((size.0 as usize, size.1 as usize))
-    })()
-    .unwrap_or((80, 24));
+    // Honor an explicit COLUMNS override (also lets scripts/screenshots pin a width).
+    if let Ok(s) = std::env::var("COLUMNS") {
+        if let Ok(c) = s.trim().parse::<usize>() {
+            if c > 0 {
+                return c.max(20);
+            }
+        }
+    }
+    let cols = crossterm::terminal::size().map(|(c, _)| c as usize).unwrap_or(80);
     cols.max(20)
 }
