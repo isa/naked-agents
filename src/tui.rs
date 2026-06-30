@@ -692,17 +692,24 @@ fn classify(
     base
 }
 
-/// Amber highlight for ordinary matches.
+/// Amber highlight for ordinary matches. Uses true-color RGB because some
+/// terminals render the 16-color "yellow" slot as gray/muted — RGB bypasses
+/// the palette entirely.
 fn match_style() -> Style {
-    Style::default().fg(Color::Black).bg(Color::Yellow)
+    Style::default()
+        .fg(Color::Rgb(24, 24, 24))
+        .bg(Color::Rgb(255, 176, 0))
+        .add_modifier(Modifier::BOLD)
 }
 
-/// Brighter amber for the current (n/N) match so it stands out from the rest.
+/// Brighter, lighter amber + underline for the current (n/N) match, so it's
+/// clearly distinct from the medium-amber ordinary matches.
 fn current_style() -> Style {
     Style::default()
-        .fg(Color::Black)
-        .bg(Color::LightYellow)
+        .fg(Color::Rgb(24, 16, 0))
+        .bg(Color::Rgb(255, 232, 90))
         .add_modifier(Modifier::BOLD)
+        .add_modifier(Modifier::UNDERLINED)
 }
 
 /// Border style for a pane: highlighted when it has focus.
@@ -721,7 +728,7 @@ fn style_for_span(span: &crate::format::RenderSpan) -> Style {
         SpanKind::User => Style::default().fg(Color::Cyan),
         SpanKind::Assistant => Style::default().fg(Color::Blue),
         SpanKind::System => Style::default().fg(Color::DarkGray),
-        SpanKind::Tool => Style::default().fg(Color::Yellow),
+        SpanKind::Tool => Style::default().fg(Color::Rgb(255, 176, 0)),
         SpanKind::ToolResult => Style::default().fg(Color::DarkGray),
         SpanKind::ToolError => Style::default().fg(Color::Red),
         SpanKind::Thinking => Style::default()

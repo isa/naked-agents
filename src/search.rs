@@ -77,17 +77,20 @@ fn make_snippet(text: &str, lo: usize, hi: usize) -> Snippet {
     let trailing = end < text.len();
 
     let mut snippet = String::new();
+    // '…' is 3 bytes (U+2026) — account for that in the body's byte offset.
+    const ELLIPSIS: &str = "…";
     if leading {
-        snippet.push('…');
+        snippet.push_str(ELLIPSIS);
     }
-    let body_off = if leading { 1 } else { 0 };
+    // Byte offset where the (collapsed) body begins within the snippet.
+    let body_off = if leading { ELLIPSIS.len() } else { 0 };
 
     // Collapse newlines to single spaces (1:1, preserves byte offsets).
     for ch in text[start..end].chars() {
         snippet.push(if ch == '\n' || ch == '\r' { ' ' } else { ch });
     }
     if trailing {
-        snippet.push('…');
+        snippet.push_str(ELLIPSIS);
     }
 
     Snippet {
@@ -100,7 +103,8 @@ fn make_snippet(text: &str, lo: usize, hi: usize) -> Snippet {
 /// Render hits to text, grouping by session. `color` enables reverse-video on
 /// the matched substring.
 pub fn fmt_hits(hits: &[Hit], color: bool) -> String {
-    const REV: &str = "\x1b[7m";
+    // True-color amber bg + dark fg + bold for the matched substring.
+    const MATCH: &str = "\x1b[1;38;2;24;24;24;48;2;255;176;0m";
     const RESET: &str = "\x1b[0m";
     const DIM: &str = "\x1b[2m";
     const CYAN: &str = "\x1b[36m";
@@ -138,7 +142,7 @@ pub fn fmt_hits(hits: &[Hit], color: bool) -> String {
             out.push_str(RESET);
             out.push_str("  ");
             out.push_str(&hit.snippet.text[..hit.snippet.lo]);
-            out.push_str(REV);
+            out.push_str(MATCH);
             out.push_str(&hit.snippet.text[hit.snippet.lo..hit.snippet.hi]);
             out.push_str(RESET);
             out.push_str(&hit.snippet.text[hit.snippet.hi..]);
@@ -177,5 +181,21 @@ mod tests {
         let s = make_snippet(text, idx, idx + 5);
         assert_eq!(&s.text[s.lo..s.hi], "match");
         assert!(!s.text.contains('\n')); // newlines collapsed
+    }
+
+    #[test]
+    fn snippet_leading_ellipsis_with_multibyte_before_match() {
+        // Regression: a long prefix forces a leading '…' (3 bytes), and a
+        // multibyte char immediately precedes the match. The highlight offsets
+        // must stay on char boundaries (the old code counted '…' as 1 byte and
+        // sliced mid-character, panicking).
+        let prefix = "x".repeat(80); // > CTX window, so a leading ellipsis is added
+        let text = format!("{prefix} → matchword →");
+        let idx = text.find("matchword").unwrap();
+        let s = make_snippet(&text, idx, idx + "matchword".len());
+        assert_eq!(&s.text[s.lo..s.hi], "matchword");
+        // The exact slices fmt_hits performs must not panic:
+        let _ = &s.text[..s.lo];
+        let _ = &s.text[s.hi..];
     }
 }

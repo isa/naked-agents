@@ -213,7 +213,7 @@ fn ansi_prefix(kind: SpanKind) -> &'static str {
         SpanKind::User => "\x1b[36m",       // cyan
         SpanKind::Assistant => "\x1b[34m",  // blue
         SpanKind::System => "\x1b[2;33m",   // dim yellow
-        SpanKind::Tool => "\x1b[33m",       // yellow
+        SpanKind::Tool => "\x1b[38;2;255;176;0m", // true-color amber (named yellow renders gray in some terminals)
         SpanKind::ToolResult => "\x1b[2;37m",// dim white/gray
         SpanKind::ToolError => "\x1b[31m",  // red
         SpanKind::Thinking => "\x1b[2;3m",  // dim italic
