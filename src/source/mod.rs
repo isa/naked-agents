@@ -43,7 +43,17 @@ pub fn discover_all() -> Result<Vec<SessionSummary>> {
         }
     }
     sort_newest_first(&mut all);
+    dedup_by_id(&mut all);
     Ok(all)
+}
+
+/// Drop summaries that share a session id, keeping the first occurrence. Since
+/// `all` is sorted newest-first, the kept row is the most recently updated one.
+/// Guards against a single logical session being logged to several files — e.g.
+/// a sidechain transcript, or a session resumed from a different working dir.
+fn dedup_by_id(sessions: &mut Vec<SessionSummary>) {
+    let mut seen = std::collections::HashSet::new();
+    sessions.retain(|s| seen.insert(s.id.clone()));
 }
 
 /// Load a full session by routing to the owning provider source.

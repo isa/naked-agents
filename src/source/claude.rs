@@ -68,6 +68,12 @@ fn walk_jsonl(dir: &Path, out: &mut Vec<PathBuf>) {
             continue;
         };
         if ft.is_dir() {
+            // `subagents/` holds sidechain transcripts: one file per spawned
+            // subagent, each carrying the *parent* session's id. Including them
+            // would list the same session id many times, so skip the directory.
+            if path.file_name().and_then(|n| n.to_str()) == Some("subagents") {
+                continue;
+            }
             walk_jsonl(&path, out);
         } else if ft.is_file() && path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
             out.push(path);
