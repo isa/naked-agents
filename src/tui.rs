@@ -182,7 +182,8 @@ impl App {
             max_tool_lines: 8,
             raw: false,
         };
-        let logical = format::render_session(session, &opts);
+        let mut logical = format::render_header(session);
+        logical.extend(format::render_session(session, &opts));
         let wrap_w = self.conv_width.max(10);
         let mut physical: Vec<RenderLine> = Vec::with_capacity(logical.len());
         for line in &logical {
@@ -724,6 +725,7 @@ fn focus_style(focused: bool) -> Style {
 fn style_for_span(span: &crate::format::RenderSpan) -> Style {
     use crate::format::SpanKind;
     match span.kind {
+        SpanKind::Title => Style::default().add_modifier(Modifier::BOLD),
         SpanKind::Plain => Style::default(),
         SpanKind::User => Style::default().fg(Color::Cyan),
         SpanKind::Assistant => Style::default().fg(Color::Blue),

@@ -32,6 +32,7 @@ impl Default for ShowOptions {
 /// Styling class for a span of text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpanKind {
+    Title,
     Plain,
     User,
     Assistant,
@@ -78,6 +79,39 @@ pub fn render_session(session: &Session, opts: &ShowOptions) -> Vec<RenderLine> 
         render_message(msg, opts, &mut out);
     }
     out
+}
+
+/// Render a compact header "section" for a session: its title, the full
+/// session id, and a one-line metadata summary. Used to anchor the top of a
+/// session's details (e.g. the TUI conversation pane), mirroring the `show`
+/// command's banner.
+pub fn render_header(session: &Session) -> Vec<RenderLine> {
+    let started = session
+        .summary
+        .started_at
+        .map(fmt_date)
+        .unwrap_or_else(|| "?".into());
+    vec![
+        line(vec![RenderSpan::typed(
+            SpanKind::Title,
+            session.summary.title.clone(),
+        )]),
+        line(vec![
+            RenderSpan::typed(SpanKind::Dim, "SESSIONID: "),
+            RenderSpan::plain(session.summary.id.clone()),
+        ]),
+        line(vec![RenderSpan::typed(
+            SpanKind::Dim,
+            format!(
+                "{} · {} messages · {}",
+                session.summary.provider.as_str(),
+                session.messages.len(),
+                started,
+            ),
+        )]),
+        // Blank line separates the header from the transcript below.
+        line(vec![]),
+    ]
 }
 
 fn render_message(msg: &Message, opts: &ShowOptions, out: &mut Vec<RenderLine>) {
@@ -209,6 +243,7 @@ const RESET: &str = "\x1b[0m";
 
 fn ansi_prefix(kind: SpanKind) -> &'static str {
     match kind {
+        SpanKind::Title => "\x1b[1m",       // bold
         SpanKind::Plain => "",
         SpanKind::User => "\x1b[36m",       // cyan
         SpanKind::Assistant => "\x1b[34m",  // blue

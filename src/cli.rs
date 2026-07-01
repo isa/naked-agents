@@ -421,10 +421,10 @@ fn print_session(session: &Session, opts: &ShowOptions, color: bool) -> Result<(
         let mut h = stdout.lock();
         writeln!(
             h,
-            "{title}\n{provider} · {id} · {msgs} messages · {started}",
+            "SESSIONID: {id}\n{title}\n{provider} · {msgs} messages · {started}",
+            id = session.summary.id,
             title = session.summary.title,
             provider = session.summary.provider.as_str(),
-            id = session.summary.id,
             msgs = session.messages.len(),
             started = session
                 .summary
