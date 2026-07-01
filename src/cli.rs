@@ -5,6 +5,8 @@ use std::io::{IsTerminal, Write};
 use anyhow::{anyhow, Result};
 use chrono::Utc;
 use clap::{Parser, Subcommand, ValueEnum};
+use comfy_table::presets::UTF8_FULL_CONDENSED;
+use comfy_table::{Attribute, Cell, Color, ContentArrangement, Table};
 
 use crate::format::{self, ShowOptions};
 use crate::model::{Provider, Session, SessionSummary};
@@ -157,7 +159,7 @@ pub fn run() -> Result<()> {
     let cli = Cli::parse();
     let color = cli.color.active();
     match cli.command {
-        Cmd::List(args) => cmd_list(args),
+        Cmd::List(args) => cmd_list(args, color),
         Cmd::Show(args) => cmd_show(args, color),
         Cmd::Search(args) => cmd_search(args, color),
         Cmd::Latest(args) => cmd_latest(args, color),
@@ -165,7 +167,7 @@ pub fn run() -> Result<()> {
     }
 }
 
-fn cmd_list(args: ListArgs) -> Result<()> {
+fn cmd_list(args: ListArgs, color: bool) -> Result<()> {
     let provider = args.provider.map(|p| p.to_provider());
     let mut sessions = source::discover_all()?;
     sessions = source::filter(sessions, provider, args.project.as_deref());
@@ -179,7 +181,7 @@ fn cmd_list(args: ListArgs) -> Result<()> {
 
     let total = sessions.len();
     let shown = sessions.len().min(args.limit);
-    print_session_table(&sessions[..shown]);
+    print_session_table(&sessions[..shown], color);
 
     if total > shown {
         eprintln!("\n(showing {shown} of {total}; use --limit to see more)");
@@ -189,31 +191,100 @@ fn cmd_list(args: ListArgs) -> Result<()> {
     Ok(())
 }
 
-fn print_session_table(sessions: &[SessionSummary]) {
-    use comfy_table::{ContentArrangement, Table};
-
+fn print_session_table(sessions: &[SessionSummary], color: bool) {
     let now = Utc::now();
-    let mut table = Table::new();
-    table.set_content_arrangement(ContentArrangement::Disabled);
-    table.set_header(vec!["ID", "PROVIDER", "MSGS", "UPDATED", "TITLE", "PROJECT"]);
 
-    for s in sessions {
-        let updated = s
-            .updated_at
-            .map(|t| format::time_ago(t, now))
-            .unwrap_or_else(|| "?".into());
-        let title = truncate(s.title.as_str(), 42);
-        let project = truncate(
-            s.project.rsplit('/').next().unwrap_or(&s.project),
-            20,
-        );
+    // Materialize the per-row strings once so we can measure the fixed columns
+    // and size the flexible TITLE / PROJECT columns to the terminal width.
+    struct Row {
+        id: String,
+        provider: &'static str,
+        msgs: String,
+        updated: String,
+        title: String,
+        project: String,
+    }
+    let rows: Vec<Row> = sessions
+        .iter()
+        .map(|s| {
+            let updated = s
+                .updated_at
+                .map(|t| format::time_ago(t, now))
+                .unwrap_or_else(|| "?".into());
+            let project = s
+                .project
+                .rsplit('/')
+                .next()
+                .filter(|p| !p.is_empty())
+                .unwrap_or(&s.project)
+                .to_string();
+            Row {
+                id: format::short_id(&s.id).to_string(),
+                provider: s.provider.as_str(),
+                msgs: s.message_count.to_string(),
+                updated,
+                title: s.title.clone(),
+                project,
+            }
+        })
+        .collect();
+
+    // Fixed columns size to their content; TITLE and PROJECT share whatever
+    // width remains so the table always fits the terminal (capped so a very
+    // wide terminal doesn't sprawl). Overhead = UTF8_FULL's vertical bars
+    // (cols + 1) + 1-space padding either side of each cell (2 * cols), plus a
+    // small safety margin for comfy-table's internal spacing.
+    let cols = 6usize;
+    let fixed = [
+        col_width("ID", rows.iter().map(|r| r.id.as_str())),
+        col_width("PROVIDER", rows.iter().map(|r| r.provider)),
+        col_width("MSGS", rows.iter().map(|r| r.msgs.as_str())),
+        col_width("UPDATED", rows.iter().map(|r| r.updated.as_str())),
+    ]
+    .into_iter()
+    .sum::<usize>();
+    let overhead = cols + 1 + 2 * cols + 2;
+    let avail = term_width().saturating_sub(overhead + fixed);
+    // PROJECT gets up to a quarter of the remaining width (at least its header
+    // width of 7); TITLE takes the rest. No forced minimums on TITLE, so on a
+    // narrow terminal it shrinks to fit instead of overflowing the screen.
+    let project_max = (avail / 4).clamp(7, 24);
+    let title_max = avail.saturating_sub(project_max).min(70);
+
+    let mut table = Table::new();
+    table
+        .load_preset(UTF8_FULL_CONDENSED)
+        .set_content_arrangement(ContentArrangement::Disabled);
+    // comfy-table gates styling on its own tty detection. Take explicit control
+    // so `--color always` styles even when piped, and `--color never` stays
+    // plain even on an interactive terminal.
+    if color {
+        table.enforce_styling();
+    } else {
+        table.force_no_tty();
+    }
+    table.set_header(vec![
+        cell("ID", color, None, true),
+        cell("PROVIDER", color, None, true),
+        cell("MSGS", color, None, true),
+        cell("UPDATED", color, None, true),
+        cell("TITLE", color, None, true),
+        cell("PROJECT", color, None, true),
+    ]);
+
+    for r in &rows {
+        let prov_color = match r.provider {
+            "claude" => Color::Magenta,
+            "codex" => Color::Cyan,
+            _ => Color::White,
+        };
         table.add_row(vec![
-            format::short_id(&s.id).to_string(),
-            s.provider.as_str().to_string(),
-            s.message_count.to_string(),
-            updated,
-            title,
-            project.to_string(),
+            cell(&r.id, color, Some(Color::DarkCyan), false),
+            cell(r.provider, color, Some(prov_color), false),
+            cell(&r.msgs, color, None, false),
+            cell(&r.updated, color, Some(Color::DarkGrey), false),
+            cell(&truncate(&r.title, title_max), color, None, false),
+            cell(&truncate(&r.project, project_max), color, Some(Color::DarkGrey), false),
         ]);
     }
 
@@ -221,12 +292,51 @@ fn print_session_table(sessions: &[SessionSummary]) {
     let _ = writeln!(stdout.lock(), "{table}");
 }
 
+/// Build a cell, applying color/bold only when `color` is on (so `--color never`
+/// and plain pipes stay unstyled).
+fn cell(text: &str, color: bool, fg: Option<Color>, bold: bool) -> Cell {
+    let mut c = Cell::new(text);
+    if color {
+        if let Some(fg) = fg {
+            c = c.fg(fg);
+        }
+        if bold {
+            c = c.add_attribute(Attribute::Bold);
+        }
+    }
+    c
+}
+
+/// Max display width of a column's header and its values.
+fn col_width<'a>(header: &str, values: impl Iterator<Item = &'a str>) -> usize {
+    use unicode_width::UnicodeWidthStr;
+    let mut w = header.width();
+    for v in values {
+        w = w.max(v.width());
+    }
+    w
+}
+
+/// Trim and truncate to fit `max` display columns, appending an ellipsis.
 fn truncate(s: &str, max: usize) -> String {
+    use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
     let s = s.trim();
-    if s.chars().count() <= max {
+    if s.width() <= max {
         return s.to_string();
     }
-    let mut out: String = s.chars().take(max.saturating_sub(1)).collect();
+    let budget = max.saturating_sub(1); // reserve one column for the ellipsis
+    let mut out: String = s
+        .chars()
+        .scan(budget, |left, ch| {
+            let w = ch.width().unwrap_or(0);
+            if *left >= w {
+                *left -= w;
+                Some(ch)
+            } else {
+                None
+            }
+        })
+        .collect();
     out.push('…');
     out
 }
